@@ -84,11 +84,10 @@ def refreshPlexLibrary(server, port, token, files) {
 }
 
 
-
 /**
- * Emby helpers
+ * Jellyfin helpers
  */
-def refreshEmbyLibrary(server, port, token) {
+def refreshJellyfinLibrary(server, port, token) {
 	// use HTTPS if hostname is specified, use HTTP if IP is specified
 	def protocol = server ==~ /localhost|[0-9.:]+/ ? 'http' : 'https'
 	def url = "${protocol}://${server}:${port ?: htpc.emby[protocol]}/Library/Refresh"
@@ -98,38 +97,6 @@ def refreshEmbyLibrary(server, port, token) {
 	log.finest "POST: $url"
 	new URL(url).post([:], [:])
 }
-
-
-
-/**
- * Sonarr helpers
- */
-def rescanSonarrSeries(server, port, apikey, seriesId) {
-	// use HTTPS if hostname is specified, use HTTP if IP is specified
-	def protocol = server ==~ /localhost|[0-9.:]+/ ? 'http' : 'https'
-	def url = new URL("$protocol://$server:$port")
-	def requestHeader = ['X-Api-Key': apikey]
-
-	def series = new JsonSlurper().parseText(new URL(url, '/api/series').get(requestHeader).text)
-	def id = series.find{ it.tvdbId == seriesId }?.id
-
-	def command = [name: 'rescanSeries', seriesId: id]
-	new URL(url, '/api/command').post(JsonOutput.toJson(command).getBytes('UTF-8'), 'application/json', requestHeader)
-}
-
-
-
-/**
- * Sickbeard helpers
- */
-def rescanSickbeardSeries(server, port, apikey, seriesId) {
-	// use HTTPS if hostname is specified, use HTTP if IP is specified
-	def protocol = server ==~ /localhost|[0-9.:]+/ ? 'http' : 'https'
-	def url = "$protocol://$server:$port/api/$apikey?cmd=show.refresh&tvdbid=$seriesId"
-	log.finest "GET: $url"
-	new URL(url).get()
-}
-
 
 
 /**
@@ -223,14 +190,14 @@ def fetchSeriesArtworkAndNfo(seriesDir, seasonDir, series, season, override = fa
 		fetchSeriesNfo(seriesDir.resolve('tvshow.nfo'), sid, locale)
 
 		// series artwork
-		['680x1000', null].findResult{ fetchSeriesBanner(seriesDir.resolve('poster.jpg'), sid, 'poster', it, null, override, locale) }
-		['graphical', null].findResult{ fetchSeriesBanner(seriesDir.resolve('banner.jpg'), sid, 'series', it, null, override, locale) }
-		['1920x1080', '1280x720', null].findResult{ fetchSeriesBanner(seriesDir.resolve('fanart.jpg'), sid, 'fanart', it, null, override, locale) }
+		fetchSeriesBanner(seriesDir.resolve('poster.jpg'), sid, 'posters', 'series', null, override, locale)
+		fetchSeriesBanner(seriesDir.resolve('banner.jpg'), sid, 'banners', 'series', null, override, locale)
+		fetchSeriesBanner(seriesDir.resolve('fanart.jpg'), sid, 'backgrounds', 'series', null, override, locale)
 
 		// season artwork
 		if (seasonDir != seriesDir) {
-			fetchSeriesBanner(seasonDir.resolve('poster.jpg'), sid, 'season', 'season', season, override, locale)
-			fetchSeriesBanner(seasonDir.resolve('banner.jpg'), sid, 'seasonwide', 'seasonwide', season, override, locale)
+			fetchSeriesBanner(seasonDir.resolve('poster.jpg'), sid, 'posters', 'season', season, override, locale)
+			fetchSeriesBanner(seasonDir.resolve('banner.jpg'), sid, 'banners', 'season', season, override, locale)
 		}
 
 		// external series artwork
@@ -289,7 +256,7 @@ def fetchMovieFanart(outputFile, movieInfo, type, diskType, override, locale) {
 
 def fetchMovieNfo(outputFile, i, movieFile) {
 	log.finest "Generate Movie NFO: $i.name [$i.id]"
-	def mi = tryLogCatch{ movieFile ? MediaInfo.snapshot(movieFile) : null }
+	def mi = tryLogCatch{ movieFile?.mediaInfo }
 	def xml = XML {
 		movie {
 			title(i.name)
@@ -332,28 +299,23 @@ def fetchMovieNfo(outputFile, i, movieFile) {
 			}
 			fileinfo {
 				streamdetails {
-					mi?.each { kind, streams ->
-						def section = kind.toString().toLowerCase()
-						streams.each { s ->
-							if (section == 'video') {
-								video {
-									codec((s.'Encoded_Library/Name' ?: s.'CodecID/Hint' ?: s.'Format').replaceAll(/[ ].+/, '').trim())
-									aspect(s.'DisplayAspectRatio')
-									width(s.'Width')
-									height(s.'Height')
-								}
-							}
-							if (section == 'audio') {
-								audio {
-									codec((s.'CodecID/Hint' ?: s.'Format').replaceAll(/\p{Punct}/, '').trim())
-									language(s.'Language/String3')
-									channels(s.'Channel(s)_Original' ?: s.'Channel(s)')
-								}
-							}
-							if (section == 'text') {
-								subtitle { language(s.'Language/String3') }
-							}
+					mi?.Video.each{ s ->
+						video {
+							codec((s.'Encoded_Library/Name' ?: s.'CodecID/Hint' ?: s.'Format').replaceAll(/[ ].+/, '').trim())
+							aspect(s.'DisplayAspectRatio')
+							width(s.'Width')
+							height(s.'Height')
 						}
+					}
+					mi?.Audio.each{ s ->
+						audio {
+							codec((s.'CodecID/Hint' ?: s.'Format').replaceAll(/\p{Punct}/, '').trim())
+							language(s.'Language/String3')
+							channels(s.'Channel(s)_Original' ?: s.'Channel(s)')
+						}
+					}
+					mi?.Text.each{ s ->
+						subtitle { language(s.'Language/String3') }
 					}
 				}
 			}
@@ -388,6 +350,6 @@ def fetchMovieArtworkAndNfo(movieDir, movie, movieFile = null, override = false,
 
 def copyIfPossible(File src, File dst) {
 	if (src.exists() && !dst.exists()) {
-		src.copyAs(dst)
+		dst.bytes = src.bytes
 	}
 }

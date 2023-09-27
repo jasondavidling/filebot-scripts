@@ -38,7 +38,8 @@ def fetchMovieNfo(m, f) {
 				studio(c)
 			}
 
-			crewFragment(delegate, i.crew)
+			certificationFragment(delegate, i)
+			crewFragment(delegate, i)
 			fileFragment(delegate, f)
 
 			if (i.imdbId) {
@@ -90,7 +91,8 @@ def fetchSeriesNfo(m, f) {
 				genre(g)
 			}
 
-			crewFragment(delegate, s.crew)
+			certificationFragment(delegate, s)
+			crewFragment(delegate, s)
 		}
 	}
 
@@ -132,7 +134,7 @@ def fetchEpisodeNfo(m, f) {
 				plot(e.overview)
 				thumb(aspect:'thumb', e.image)
 
-				crewFragment(delegate, e.crew)
+				crewFragment(delegate, e)
 				fileFragment(delegate, f)
 			}
 		}
@@ -148,8 +150,8 @@ def fetchEpisodeNfo(m, f) {
 }
 
 
-def crewFragment(element, crew) {
-	crew.each{ p ->
+def crewFragment(element, info) {
+	info.crew.each{ p ->
 		if (p.director) {
 			element.director(p.name)
 		} else if (p.writer) {
@@ -166,31 +168,39 @@ def crewFragment(element, crew) {
 }
 
 
+def certificationFragment(element, info) {
+	info.certifications.each{ k, v ->
+		element.certification {
+			country(k)
+			rating(v)
+		}
+	}
+}
+
+
+
 def fileFragment(element, file) {
+	def mi = file.mediaInfo
+
 	element.fileinfo {
 		streamdetails {
-			MediaInfo.snapshot(file).each{ kind, streams ->
-				def section = kind.toString().toLowerCase()
-				streams.each{ s ->
-					if (section == 'video') {
-						video {
-							codec((s.'Encoded_Library/Name' ?: s.'CodecID/Hint' ?: s.'Format').replaceAll(/[ ].+/, '').trim())
-							aspect(s.'DisplayAspectRatio')
-							width(s.'Width')
-							height(s.'Height')
-						}
-					}
-					if (section == 'audio') {
-						audio {
-							codec((s.'CodecID/Hint' ?: s.'Format').replaceAll(/\p{Punct}/, '').trim())
-							language(s.'Language/String3')
-							channels(s.'Channel(s)_Original' ?: s.'Channel(s)')
-						}
-					}
-					if (section == 'text') {
-						subtitle { language(s.'Language/String3') }
-					}
+			mi.Video.each{ s ->
+				video {
+					codec((s.'Encoded_Library/Name' ?: s.'CodecID/Hint' ?: s.'Format').replaceAll(/[ ].+/, '').trim())
+					aspect(s.'DisplayAspectRatio')
+					width(s.'Width')
+					height(s.'Height')
 				}
+			}
+			mi.Audio.each{ s ->
+				audio {
+					codec((s.'CodecID/Hint' ?: s.'Format').replaceAll(/\p{Punct}/, '').trim())
+					language(s.'Language/String3')
+					channels(s.'Channel(s)_Original' ?: s.'Channel(s)')
+				}
+			}
+			mi.Text.each{ s ->
+				subtitle { language(s.'Language/String3') }
 			}
 		}
 	}
@@ -199,7 +209,20 @@ def fileFragment(element, file) {
 
 
 
-args.getFiles{ it.video }.each{ f ->
+def videoFiles = args.getFiles{ it.video }
+
+// require input arguments
+if (args.size() == 0) {
+	die "Illegal usage: no input arguments"
+}
+
+// require video files
+if (videoFiles.size() == 0) {
+	die "Illegal usage: no video files"
+}
+
+
+videoFiles.each{ f ->
 	def m = f.metadata
 	switch(m) {
 		case Movie:

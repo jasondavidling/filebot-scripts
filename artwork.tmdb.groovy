@@ -12,8 +12,8 @@ include('lib/htpc')
 
 args.eachMediaFolder{ dir ->
 	// fetch only missing artwork by default
-	if (dir.hasFile{ it.name == 'movie.nfo' } && dir.hasFile{ it.name == 'poster.jpg' } && dir.hasFile{ it.name == 'fanart.jpg' }) {
-		log.finest "Skipping $dir"
+	if (dir.hasFile{ it.name == 'poster.jpg' }) {
+		log.finest "Skip [$dir] because [poster.jpg] already exists"
 		return
 	}
 
@@ -27,10 +27,10 @@ args.eachMediaFolder{ dir ->
 		options = TheMovieDB.searchMovie(query, locale).sortBySimilarity(query){ it.name }
 	} else if (videos.size() > 0) {
 		// run movie auto-detection for video files
-		options = detectMovie(videos[0], true)
+		options = MediaDetection.detectMovie(videos[0], TheMovieDB, locale, true)
 	}
 
-	if (options.isEmpty()) {
+	if (!options) {
 		log.warning "$dir ${videos.name} => movie not found"
 		return
 	}

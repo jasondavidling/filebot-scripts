@@ -11,6 +11,7 @@ order  = 'INPUT'  .equalsIgnoreCase(_args.order) ? 'INPUT'
        : 'SIZE'   .equalsIgnoreCase(_args.order) ? 'SIZE'
        : 'DATE'   .equalsIgnoreCase(_args.order) ? 'DATE'
        : 'TIME'   .equalsIgnoreCase(_args.order) ? 'TIME'
+       : _args.order ==~ /^[{].*[}]$/ ? __shell.callable(_args.order) // e.g. --order '{ a, b -> 0 }'
        : binary ? 'INPUT' : 'QUALITY'
 
 
@@ -53,8 +54,8 @@ def group(files) {
 	return files.findAll{ it.isVideo() }.groupBy{ f ->
 		def m = f.metadata
 		// Strict Mode: group by metadata
-		// Non-Lenient Mode: group by metadata and video format
-		return !m || _args.strict ? m : [m, getMediaInfo(f, '{vf}')]
+		// Non-Lenient Mode: group by metadata and video format and HDR type
+		return !m || _args.strict ? m : [m, getMediaInfo(f, '{vf} {hdr}')]
 	}
 }
 
@@ -71,6 +72,8 @@ def order(files) {
 			return files.toSorted{ -(it.mediaCharacteristics?.creationTime?.toEpochMilli() ?: it.creationDate) }
 		case 'TIME':
 			return files.toSorted{ -(it.lastModified()) }
+		default:
+			return files.toSorted(order)
 	}
 }
 

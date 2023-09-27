@@ -4,11 +4,22 @@
 def xattrFiles = []
 def xattrFolders = [] as Set
 
-args*.eachFileRecurse{ f ->
+args.flatten{ f -> f.isDirectory() ? f.listFiles{ true } : f }.each{ f ->
+	// sanity check input file path
+	if (!f.exists()) {
+		log.warning "File does not exist: $f"
+		return
+	}
+
+	// read / write custom xattr values
+	_def.each{ k, v -> setXattrKey(f, k, v) }
+
 	// select files with xattr metadata
-	if (f.metadata) {
+	if (f.xattr.keySet().any{ k -> !isSystemKey(k) }) {
 		xattrFiles += f
 	}
+
+	// manage .xattr folders
 	if (f.name == /net.filebot.metadata/) {
 		xattrFolders += f.dir.dir
 	}
@@ -17,7 +28,15 @@ args*.eachFileRecurse{ f ->
 
 xattrFiles.each{ f ->
 	log.finest "$f"
-	f.xattr.each{ k, v -> log.fine "\t$k: $v" }
+	f.xattr.each{ k, v ->
+		if (v ==~ /[\p{Print}\p{Space}]*/) {
+			log.fine "\t$k: $v"
+		} else {
+			// use 1 replacement character for each digit of magnitude
+			def holder = '�' * v.length().toString().length()
+			log.fine "\t$k: $holder"
+		}
+	}
 
 	if (_args.action =~ /clear/) {
 		clear(f)
@@ -46,6 +65,24 @@ if (!xattrFiles && !xattrFolders) {
 }
 
 
+
+
+// hide system xattr keys
+def isSystemKey(k) {
+	k.startsWith('com.apple.') && _args.strict
+}
+
+
+// clear xattr metadata
+def setXattrKey(f, k, v) {
+	if (v) {
+		log.info "[SET] $f:$k = $v"
+		f.xattr[k] = v
+	} else if (f.xattr[k]) {
+		log.info "[UNSET] $f:$k"
+		f.xattr[k] = null
+	}
+}
 
 
 // clear xattr metadata
@@ -79,9 +116,7 @@ def refresh(f) {
 
 // import xattr metadata into Mac OS X Finder tags (UAYOR)
 def kMDItemUserTags(f) {
-	def xkey = 'com.apple.metadata:_kMDItemUserTags'
-	def info = getMediaInfo(f, '''{if (movie) 'Movie'};{if (episode) 'Episode'};{source};{vf};{sdhd}''')
-	def tags = info.split(';')*.trim().findAll{ it.length() > 0 }
+	def tags = getMediaInfo(f, '{movie; /Movie/}|{episode; /Episode/}|{y}|{source}|{vf}|{hd}').tokenize('|').findResults{ it }
 
 	def plist = XML{
 		plist(version:'1.0') {
@@ -93,8 +128,8 @@ def kMDItemUserTags(f) {
 		}
 	}
 
-	log.info "[IMPORT] Write tag plist to xattr [$xkey]: $tags"
-	f.xattr[xkey] = plist
+	log.info "[IMPORT] Write tag plist to xattr [com.apple.metadata:_kMDItemUserTags]: $plist"
+	f.xattr['com.apple.metadata:_kMDItemUserTags'] = plist
 }
 
 

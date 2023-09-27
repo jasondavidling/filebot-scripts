@@ -1,33 +1,18 @@
 #!/usr/bin/env filebot -script
 
 
-// --output folder must be a valid folder
-outputFolder = _args.absoluteOutputFolder
+// print input folders
+args.each{ folder -> log.fine "Watch $folder" }
 
-if (outputFolder == null || !outputFolder.isDirectory() || !outputFolder.canWrite()) {
-	die "Invalid usage: output folder must exist and must be a writable directory: $outputFolder"
+
+// watch input folders
+args*.watchFolder{ changes ->
+	// call amc script on newly added files
+	executeScript('amc', changes)
+	commit()
 }
 
 
-// watch folders and process files that were added / modified
-def watchman = args[0].watchFolder{ changes ->
-	// log input files
-	changes.each{ f -> log.fine "Input: $f" }
-
-	// extract archives to output directory
-	if (_args.extract) {
-		changes += extract(file: changes.findAll{ it.archive }, output: outputFolder / 'Archive')
-	}
-
-	// rename input files
-	if (_args.rename) {
-		rename(file: changes)
-	}
-}
-
-// commit changes after 5s of settle down time
-watchman.commitDelay = 5000
-watchman.commitPerFolder = true
-
-println "Press ENTER to exit..."
+// keep running indefinitely
+println "Press ENTER to quit..."
 console.readLine()

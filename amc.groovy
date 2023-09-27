@@ -5,19 +5,38 @@
 log.fine("Run script [$_args.script] at [$now]")
 
 
-if (Settings.getApplicationRevisionNumber() < 9483){
-	die """-script $_args.script requires FileBot r9483 or higher. You are running FileBot r${Settings.getApplicationRevisionNumber()}.\nPlease use -script fn:amc and NOT -script $_args.script to ensure compatibility."""
-}
 
-
-log.warning """
-[PSA] Important Discussion of Proposed Changes:
+help """
+[PSA] Important Discussion of Changes effective as of 28 Apr 2023:
 https://www.filebot.net/forums/viewtopic.php?t=13406
 """
 
 
-_def.each{ n, v -> log.finest('Parameter: ' + [n, n =~ /plex|kodi|emby|pushover|pushbullet|discord|mail|myepisodes/ ? '*****' : v].join(' = ')) }
-args.withIndex().each{ f, i -> if (f.exists()) { log.finest "Argument[$i]: $f" } else { log.warning "Argument[$i]: File does not exist: $f" } }
+
+// sanity check script parameters
+_def.each{ n, v ->
+	// mirror script parameters and print warnings for invalid or mistyped parameters 
+	if (n ==~ /kodi|plex|jellyfin|emby|pushbullet|pushover|discord|gmail|mail|mailto|myepisodes/) {
+		log.finest "Parameter: $n = *****"
+	} else if (n ==~ /ut_dir|ut_file|ut_label|ut_title|ut_kind|ut_state|ut_state_allow|music|subtitles|artwork|reportError|storeReport|extractFolder|skipExtract|deleteAfterExtract|clean|exec|unsorted|ignore|minLengthMS|minFileSize|minFileAge|excludeLink|excludeList|movieFormat|seriesFormat|animeFormat|musicFormat|unsortedFormat|movieDB|seriesDB|animeDB|musicDB/) {
+		log.finest "Parameter: $n = $v"
+	} else {
+		log.warning "Invalid usage: --def $n is not used and has no effect"
+	}
+	// print warnings for badly delimited argument values
+	if (v =~ /^[@'"]|[@'"]$/) {
+		log.warning "Bad $n value: $v"
+	}
+}
+
+// sanity check input arguments
+args.withIndex().each{ f, i ->
+	if (f.exists()) {
+		log.finest "Argument[$i]: $f"
+	} else {
+		log.warning "Argument[$i]: File does not exist: $f"
+	}
+}
 
 
 
@@ -31,15 +50,15 @@ outputFolder = _args.absoluteOutputFolder
 // enable/disable features as specified via --def parameters
 unsorted  = tryQuietly{ unsorted.toBoolean() }
 music     = tryQuietly{ music.toBoolean() }
-subtitles = tryQuietly{ subtitles.split(/\W+/) as List }
+subtitles = tryQuietly{ subtitles.matchAll(/\w\w+/) }
 artwork   = tryQuietly{ artwork.toBoolean() }
 clean     = tryQuietly{ clean.toBoolean() }
 exec      = tryQuietly{ exec.toString() }
 
-// array of kodi/plex/emby hosts
-kodi = tryQuietly{ any{kodi}{xbmc}.split(/[ ,;|]+/)*.split(/:(?=\d+$)/).collect{ it.length >= 2 ? [host: it[0], port: it[1] as int] : [host: it[0]] } }
-plex = tryQuietly{ plex.split(/[ ,;|]+/)*.split(/:/).collect{ it.length >= 2 ? [host: it[0], token: it[1]] : [host: it[0]] } }
-emby = tryQuietly{ emby.split(/[ ,;|]+/)*.split(/:/).collect{ it.length >= 2 ? [host: it[0], token: it[1]] : [host: it[0]] } }
+// array of kodi/plex/jellyfin hosts
+kodi = tryQuietly{ kodi.split(/[ ,;|]+/)*.split(/:(?=\d+$)/).collect{ it.length >= 2 ? [host: it[0], port: it[1] as int] : [host: it[0]] } }
+plex = tryQuietly{ plex.split(/[ ,;|]+/)*.split(/:/).collect{ it.length >= 3 ? [host: it[0], port: it[1] as int, token: it[2]] : it.length >= 2 ? [host: it[0], token: it[1]] : [host: it[0]] } }
+jellyfin = tryQuietly{ any{jellyfin}{emby}.split(/[ ,;|]+/)*.split(/:/).collect{ it.length >= 3 ? [host: it[0], port: it[1] as int, token: it[2]] : it.length >= 2 ? [host: it[0], token: it[1]] : [host: it[0]] } }
 
 // extra options, myepisodes updates and email notifications
 extractFolder      = tryQuietly{ extractFolder as File }
@@ -65,21 +84,24 @@ minLengthMS = any{ minLengthMS.toLong() }{ 10 * 60 * 1000L }
 
 // database preferences
 seriesDB = any{ seriesDB }{ 'TheMovieDB::TV' }
-animeDB = any{ animeDB }{ 'TheMovieDB::TV' }
+animeDB = any{ animeDB }{ seriesDB }
 movieDB = any{ movieDB }{ 'TheMovieDB' }
 musicDB = any{ musicDB }{ 'ID3' }
 
 // series / anime / movie format expressions
-seriesFormat   = any{ seriesFormat   }{ _args.format }{ '{plex}' }
-animeFormat    = any{ animeFormat    }{ _args.format }{ '{plex}' }
-movieFormat    = any{ movieFormat    }{ _args.format }{ '{plex}' }
-musicFormat    = any{ musicFormat    }{ _args.format }{ '{plex}' }
-unsortedFormat = any{ unsortedFormat }{ 'Unsorted/{relativeFile}' }
+seriesFormat   = any{ seriesFormat   }{ _args.format }{ '{ plex.id }' }
+animeFormat    = any{ animeFormat    }{ _args.format }{ 'Anime/{ ~plex.id }' }
+movieFormat    = any{ movieFormat    }{ _args.format }{ '{ plex.id }' }
+musicFormat    = any{ musicFormat    }{ _args.format }{ '{ plex.id }' }
+unsortedFormat = any{ unsortedFormat }{ 'Unsorted/{ relativeFile }' }
+
+// default anime mapper expression
+animeMapper = any{ _args.mapper }{ animeDB ==~ /(?i:AniDB)/ ? null : 'allOf{ episode }{ order.absolute.episode }{ AnimeList.AniDB }' }
 
 
 
 // include artwork/nfo, pushover/pushbullet and ant utilities as required
-if (artwork || kodi || plex || emby) { include('lib/htpc') }
+if (artwork || kodi || plex || jellyfin) { include('lib/htpc') }
 if (pushover || pushbullet || gmail || mail || discord) { include('lib/web') }
 
 
@@ -91,15 +113,6 @@ def ut = _def.findAll{ k, v -> k.startsWith('ut_') }.collectEntries{ k, v ->
 		v = null
 	}
 	return [k.substring(3), v ? v : null]
-}
-
-_def.each{ k, v ->
-	if (v =~ /^[@'"]|[@'"]$/) {
-		log.warning "Bad $k value: $v"
-	}
-	if (k =~ /^[A-Z]/) {
-		log.warning "Invalid usage: upper-case script parameter --def $k has no effect"
-	}
 }
 
 if (_args.db) {
@@ -328,21 +341,21 @@ def resolveInput(f) {
 // flatten nested file structure
 def input = roots.findAll{ acceptFile(it) }.flatten{ resolveInput(it) }
 
-// update exclude list with all input that will be processed during this run
-if (excludeList && !testRun) {
-	try {
-		excludePathSet.append(excludeList, extractedArchives, input)
-	} catch(e) {
-		die "Failed to write excludes: $excludeList: $e"
-	}
-}
-
 // print exclude and input sets for logging
 input.each{ f ->
 	log.fine "Input: $f"
 	// print xattr metadata
 	if (f.metadata) {
 		log.fine "       └─ Metadata: $f.metadata"
+	}
+}
+
+// update exclude list with all input that will be processed during this run
+if (excludeList && !testRun) {
+	try {
+		excludePathSet.append(excludeList, extractedArchives, input)
+	} catch(e) {
+		die "Failed to write excludes: $excludeList: $e"
 	}
 }
 
@@ -368,10 +381,11 @@ def forceGroup() {
 		case ~/.*(?i:Audio|Music|Music.Video).*/:
 			log.fine "Process as Music [$label]"
 			return AutoDetection.Group.Music
-		case ~/.*(?i:games|book|other|ignore).*/:
+		case ~/.*(?i:games|book|other|ignore|unsorted).*/:
 			log.fine "Process as Unsorted [$label]"
 			return AutoDetection.Group.None
 		default:
+			log.fine "Group files by movie or series"
 			return null
 	}
 }
@@ -413,7 +427,7 @@ groups.each{ group, files ->
 	// EPISODE MODE
 	if ((group.isSeries() || group.isAnime()) && !group.isMovie()) {
 		// choose series / anime
-		def rfs = group.isSeries() ? rename(file: files, format: seriesFormat, db: seriesDB) : rename(file: files, format: animeFormat, db: animeDB)
+		def rfs = group.isSeries() ? rename(file: files, format: seriesFormat, db: seriesDB) : rename(file: files, format: animeFormat, db: animeDB, mapper: animeMapper)
 
 		if (rfs) {
 			destinationFiles += rfs
@@ -526,10 +540,12 @@ if (exec) {
 // ---------- REPORTING ---------- //
 
 
-if (getRenameLog().size() > 0) {
-	// messages used for kodi / plex / emby pushover notifications
+def renameLog = getRenameLog()
+
+if (renameLog.size() > 0) {
+	// messages used for kodi / plex / jellyfin pushover notifications
 	def getNotificationTitle = {
-		def count = getRenameLog().count{ k, v -> !v.isSubtitle() }
+		def count = renameLog.count{ k, v -> !v.isSubtitle() }
 		return "FileBot finished processing $count files"
 	}.memoize()
 
@@ -550,22 +566,22 @@ if (getRenameLog().size() > 0) {
 	if (plex) tryLogCatch {
 		plex.each{ instance ->
 			log.fine "Notify Plex [$instance.host]"
-			refreshPlexLibrary(instance.host, null, instance.token, destinationFiles)
+			refreshPlexLibrary(instance.host, instance.port, instance.token, destinationFiles)
 		}
 	}
 
-	// make Emby scan for new content
-	if (emby) tryLogCatch {
-		emby.each{ instance ->
-			log.fine "Notify Emby [$instance.host]"
-			refreshEmbyLibrary(instance.host, null, instance.token)
+	// make Jellyfin scan for new content
+	if (jellyfin) tryLogCatch {
+		jellyfin.each{ instance ->
+			log.fine "Notify Jellyfin [$instance.host]"
+			refreshJellyfinLibrary(instance.host, instance.port, instance.token)
 		}
 	}
 
 	// mark episodes as 'acquired'
 	if (myepisodes) tryLogCatch {
 		log.fine 'Update MyEpisodes'
-		executeScript('update-mes', [login:myepisodes.join(':'), addshows:true], destinationFiles)
+		executeScript('update-mes', [login: myepisodes.join(':'), addshows: true], destinationFiles)
 	}
 
 	// pushover only supports plain text messages
@@ -578,7 +594,6 @@ if (getRenameLog().size() > 0) {
 	def getReportSubject = { getNotificationMessage('', '; ') }
 	def getReportTitle = { '[FileBot] ' + getReportSubject() }
 	def getReportMessage = { 
-		def renameLog = getRenameLog()
 		'''<!DOCTYPE html>\n''' + XML {
 			html {
 				head {
@@ -704,7 +719,7 @@ if (clean && !testRun) {
 		cleanerInput = cleanerInput.findAll{ f -> f.exists() }
 		if (cleanerInput.size() > 0) {
 			log.fine 'Clean clutter files and empty folders'
-			executeScript('cleaner', args.size() == 0 ? [root:true, ignore: ignore] : [root:false, ignore: ignore], cleanerInput)
+			executeScript('cleaner', args.size() == 0 ? [root: true, ignore: ignore] : [root: false, ignore: ignore], cleanerInput)
 		}
 	}
 }
